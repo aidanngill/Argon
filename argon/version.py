@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import urllib.parse
+import zipfile
 from typing import List
 
 import aiofiles
@@ -13,6 +14,15 @@ from . import shared, util
 from .exceptions import InvalidPath
 
 log = logging.getLogger(__name__)
+
+
+def fetch_library_path(library: dict) -> str:
+    full_path, full_name = library["name"].split(":", 1)
+    lib_path = full_path.split(".") + full_name.split(":")
+
+    lib_path.append(full_name.replace(":", "-", 1) + ".jar")
+
+    return lib_path
 
 
 class Version:
@@ -144,7 +154,29 @@ class Version:
         if inherits is not None:
             return await inherits.fetch_java_version()
 
-        return (await self.fetch_data())["javaVersion"]
+        data = await self.fetch_data()
+
+        if "javaVersion" in data:
+            return data["javaVersion"]
+
+        # Older versions do not list a Java version.
+        return {"component": "jre-legacy", "majorVersion": 8}
+
+    async def fetch_jvm_arguments(self):
+        data = await self.fetch_data()
+
+        if "arguments" in data:
+            return data["arguments"]["jvm"]
+
+        return shared.DEFAULT_JVM_ARGS
+
+    async def fetch_game_arguments(self):
+        data = await self.fetch_data()
+
+        if "arguments" in data:
+            return data["arguments"]["game"]
+
+        return data.get("minecraftArguments", "").split(" ")
 
     async def get_java_path(self, base_path: str) -> str:
         return os.path.join(
@@ -218,10 +250,7 @@ class Version:
             # [url]     -> Base URL for the repository that holds the libraries.
             # [name]    -> The name of the Java library.
             if "url" in library:
-                full_path, full_name = library["name"].split(":", 1)
-                lib_path = full_path.split(".") + full_name.split(":")
-
-                lib_path.append(full_name.replace(":", "-", 1) + ".jar")
+                lib_path = fetch_library_path(library)
 
                 async with aiohttp.ClientSession() as session:
                     url = library["url"] + "/".join(
@@ -281,3 +310,47 @@ class Version:
                             async with session.get(native["url"]) as resp:
                                 async with aiofiles.open(native_file, "wb") as file:
                                     await file.write(await resp.read())
+
+    async def extract_native_libraries(
+        self, game_path: str, bin_directory: str
+    ) -> None:
+        """ Extract the DLLs from native libraries to a temporary directory. """
+        bits, _ = platform.architecture()
+        arch = bits[:2]
+
+        for library in await self.fetch_libraries():
+            if not "natives" in library:
+                continue
+
+            if not "extract" in library:
+                continue
+
+            lib_downloads = library["downloads"]
+            lib_path = fetch_library_path(library)
+
+            file_name = lib_path[-1].rsplit(".jar", 1)[0]
+
+            # Edit the file name to include the OS specific version.
+            key = "natives-{0}".format(shared.SYSTEM_TARGET)
+            key_arch = "{0}-{1}".format(key, arch)
+
+            if not key in lib_downloads["classifiers"]:
+                if not key_arch in lib_downloads["classifiers"]:
+                    continue
+
+                key = key_arch
+
+            file_name = f"{file_name}-{key}.jar"
+            file_path = os.path.join(game_path, "libraries", *lib_path[:-1], file_name)
+
+            if not os.path.isfile(file_path):
+                continue
+
+            excludes = library["extract"].get("exclude", [])
+
+            with zipfile.ZipFile(file_path, "r") as file:
+                for item in file.namelist():
+                    if any([item.startswith(i) for i in excludes]):
+                        continue
+
+                    file.extract(item, bin_directory)

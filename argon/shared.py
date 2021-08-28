@@ -10,3 +10,11 @@ SHA1_BUFFER_SIZE = 64 * 1024
 
 SYSTEM_NAME = platform.system()
 SYSTEM_TARGET = SYSTEM_DEFINITIONS.get(SYSTEM_NAME, None)
+
+DEFAULT_JVM_ARGS = [
+    "-Djava.library.path={natives_directory}",
+    "-Dminecraft.launcher.brand={launcher_name}",
+    "-Dminecraft.launcher.version={launcher_version}",
+    "-cp",
+    "{classpath}",
+]

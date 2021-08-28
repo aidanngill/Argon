@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import subprocess
+import uuid
 from typing import List, Union
 from zipfile import ZipFile
 
@@ -294,10 +295,16 @@ class Argon:
                 await inherit_data.fetch_data(), self.path
             )
 
+        # Extract DLLs to a temporary location.
+        bin_path = os.path.join(self.path, "bin", str(uuid.uuid4()))
+
+        if not os.path.isdir(bin_path):
+            os.makedirs(bin_path)
+
+        await version.extract_native_libraries(self.path, bin_path)
+
         kwargs = {
-            "natives_directory": os.path.join(
-                self.versions_path, version.name, "natives"
-            ),
+            "natives_directory": bin_path,
             "launcher_name": "argon",
             "launcher_version": "0.1.0",
             "auth_player_name": user.alias,
@@ -310,10 +317,17 @@ class Argon:
             "user_type": "mojang",
             "version_type": version.type,
             "classpath": os.pathsep.join(class_path),
-            "user_properties": "{}",  # Something with Twitch? TODO: Default values for arguments elsewhere.
         }
 
-        data = version_data if inherit_data is None else await inherit_data.fetch_data()
+        # Adjust Kwargs for older versions.
+        kwargs.update(
+            {
+                "game_assets": kwargs["assets_root"],
+                "auth_session": f"token:{user.access_token}:{user.uuid}",
+                "user_properties": "{}",
+            }
+        )
+
         runtime = os.path.join(self.path, "runtime")
 
         if not os.path.isdir(runtime):
@@ -321,29 +335,18 @@ class Argon:
 
         os.chdir(runtime)
 
-        arguments = data.get("arguments", None)
+        java_arguments = await version.fetch_jvm_arguments()
+        game_arguments = await version.fetch_game_arguments()
 
-        java_arguments = None
-        game_arguments = None
+        args = [
+            await version.get_java_path(self.path),
+            *util.create_arguments(java_arguments, **kwargs),
+            await version.fetch_main_class(),
+            *util.create_arguments(game_arguments, **kwargs),
+        ]
 
-        if arguments is not None:
-            game_arguments = arguments["game"]
-            java_arguments = arguments["jvm"]
-        else:
-            game_arguments = data["minecraftArguments"]
-            java_arguments = [
-                "-Djava.library.path={natives_directory}",
-                "-Dminecraft.launcher.brand={launcher_name}",
-                "-Dminecraft.launcher.version={launcher_version}",
-                "-cp",
-                "{classpath}",
-            ]
+        subprocess.call(args)
 
-        subprocess.call(
-            [
-                await version.get_java_path(self.path),
-                *util.create_arguments(java_arguments, **kwargs),
-                await version.fetch_main_class(),
-                *util.create_arguments(game_arguments, **kwargs),
-            ]
-        )
+        # Clean up after ourselves.
+        shutil.rmtree(bin_path)
+        log.debug("Cleaned up the binary directory.")
