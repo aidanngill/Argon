@@ -163,7 +163,12 @@ class Version:
         return {"component": "jre-legacy", "majorVersion": 8}
 
     async def fetch_jvm_arguments(self):
-        data = await self.fetch_data()
+        inherits = await self.fetch_inherited()
+
+        if inherits is not None:
+            data = await inherits.fetch_data()
+        else:
+            data = await self.fetch_data()
 
         if "arguments" in data:
             return data["arguments"]["jvm"]
@@ -171,7 +176,12 @@ class Version:
         return shared.DEFAULT_JVM_ARGS
 
     async def fetch_game_arguments(self):
-        data = await self.fetch_data()
+        inherits = await self.fetch_inherited()
+
+        if inherits is not None:
+            data = await inherits.fetch_data()
+        else:
+            data = await self.fetch_data()
 
         if "arguments" in data:
             return data["arguments"]["game"]

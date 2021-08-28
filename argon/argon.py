@@ -84,17 +84,17 @@ class Argon:
         if not exist_ok and os.path.isdir(version_path):
             raise InvalidPath(f"Version path for '{version_name}' already exists")
 
-        os.makedirs(version_path, exist_ok=exist_ok)
+        version = None
 
-        version_data = None
-
-        for version in await util.list_all_versions():
-            if version.name == version_name:
-                version_data = version
+        for item in await util.list_all_versions():
+            if item.name == version_name:
+                version = item
                 break
 
-        if version_data is None:
+        if version is None:
             raise InvalidPath(f"Version '{version_name}' does not exist")
+
+        os.makedirs(version_path, exist_ok=exist_ok)
 
         if not version.has_data:
             await version.fetch_data()
@@ -103,17 +103,17 @@ class Argon:
         json_file = os.path.join(version_path, "{0}.json".format(version.name))
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(await version_data.fetch_jar_url()) as resp:
+            async with session.get(await version.fetch_jar_url()) as resp:
                 async with aiofiles.open(jar_file, "wb") as file:
                     await file.write(await resp.read())
 
         async with aiofiles.open(json_file, "wb") as file:
-            await file.write(json.dumps(await version_data.fetch_data()).encode())
+            await file.write(json.dumps(await version.fetch_data()).encode())
 
         return version
 
     async def get_version(
-        self, version_name: str, is_local: bool = True
+        self, version_name: str, is_local: bool = False
     ) -> Union[Version, None]:
         """Get the specified version.
 
@@ -124,12 +124,12 @@ class Argon:
         if not isinstance(version_name, str):
             return None
 
-        # Try to find the version locally initially.
-        version_path = os.path.join(self.versions_path, version_name)
-
         try:
             version = Version.from_path(self.path, version_name)
         except InvalidPath:
+            if is_local:
+                return None
+
             version = await self._download_version(version_name)
 
         await version.download_assets(self.path)
@@ -187,10 +187,8 @@ class Argon:
             async with session.post(url, json=data, headers=headers) as resp:
                 data = await resp.json()
 
-                if not resp.ok:
-                    log.error(
-                        f"Failed to log in as {username} (code {resp.status_code})."
-                    )
+                if resp.status != 200:
+                    log.error(f"Failed to log in as {username} (code {resp.status}).")
                     return None
 
         log.info(f"Logged in as {username} successfully.")

@@ -63,7 +63,7 @@ async def main():
                     user = item
                     break
         else:
-            user = client.login(opts.username, opts.password)
+            user = await client.login(opts.username, opts.password)
 
     if user is None:
         log.fatal("Invalid account credentials were provided.")
